@@ -62,7 +62,8 @@ def Quantize(tensor,quant_mode='det',  params=None, numBits=8):
         quant_fixed(tensor, params)
     return tensor
 
-import torch.nn._functions as tnnf
+#import torch.nn._functions as tnnf
+import torch.nn.functional as tnnf
 
 
 class BinarizeLinear(nn.Linear):
@@ -105,3 +106,38 @@ class BinarizeConv2d(nn.Conv2d):
             out += self.bias.view(1, -1, 1, 1).expand_as(out)
 
         return out
+
+
+class BinarizeAvgPool2d(nn.AvgPool2d):
+
+    def __init__(self, *kargs, **kwargs):
+        super(BinarizeAvgPool2d, self).__init__(*kargs, **kwargs)
+
+    def forward(self, input):
+        out = nn.functional.avg_pool2d(input, self.output_size)
+        out.data = Binarize(out.data)
+        return out
+    
+
+class BinarizeAdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
+
+    def __init__(self, *kargs, **kwargs):
+        super(BinarizeAdaptiveAvgPool2d, self).__init__(*kargs, **kwargs)
+
+    def forward(self, input):
+        # print(f"the input size is {input.size()}")
+        # print(f"the output size is {self.output_size}")
+        out = nn.functional.avg_pool2d(input, self.output_size)
+        out.data = Binarize(out.data)
+        return out
+    
+    
+class PrintShape(nn.Module):
+    def __init__(self, name: str = ""):
+        super(PrintShape,self).__init__()
+        self.name = name
+
+
+    def forward(self, input):
+        print(f"{self.name} have shape {input.shape}")
+        return input

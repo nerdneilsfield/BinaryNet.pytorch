@@ -18,61 +18,181 @@ from datetime import datetime
 from ast import literal_eval
 from torchvision.utils import save_image
 
-import cProfile
+from pandas import DataFrame as df
+
+# ----------------------------------------------------------------
+# -------- GLOBAL VARIABLES --------------------------------------
+layer_idx = 0
+batch_idx = 0 detailed_array = None
+
+
+counter_df = df(
+    columns=[
+        'Id',
+        'Type',
+        'Input Shape',
+        'Input Total',
+        'Input Zeros',
+        'Input Negatives',
+        'Input Positives',
+        'Input Negative Rate',
+        'Output Shape',
+        'Output Total',
+        'Output Zeros',
+        'Output Negatives',
+        'Output Positives',
+        'Output Negative Rate'
+    ]
+)
 
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='PyTorch ConvNet Training')
+# ------------------------------------------------------------
+# --------- CLASSES -------------------------------------------
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
 
-parser.add_argument('--results_dir', metavar='RESULTS_DIR', default='./results',
-                    help='results dir')
-parser.add_argument('--save', metavar='SAVE', default='',
-                    help='saved folder')
-parser.add_argument('--dataset', metavar='DATASET', default='imagenet',
-                    help='dataset name or folder')
-parser.add_argument('--model', '-a', metavar='MODEL', default='alexnet',
-                    choices=model_names,
-                    help='model architecture: ' +
-                    ' | '.join(model_names) +
-                    ' (default: alexnet)')
-parser.add_argument('--input_size', type=int, default=None,
-                    help='image input size')
-parser.add_argument('--model_config', default='',
-                    help='additional architecture configuration')
-parser.add_argument('--type', default='torch.cuda.FloatTensor',
-                    help='type of tensor - e.g torch.cuda.HalfTensor')
-parser.add_argument('--gpus', default='0',
-                    help='gpus used for training - e.g 0,1,3')
-parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
-                    help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=2500, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
-                    metavar='N', help='mini-batch size (default: 256)')
-parser.add_argument('--optimizer', default='SGD', type=str, metavar='OPT',
-                    help='optimizer function used')
-parser.add_argument('--lr', '--learning_rate', default=0.1, type=float,
-                    metavar='LR', help='initial learning rate')
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
-                    metavar='W', help='weight decay (default: 1e-4)')
-parser.add_argument('--print-freq', '-p', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
-parser.add_argument('-e', '--evaluate', type=str, metavar='FILE',
-                    help='evaluate model FILE on validation set')
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+#------------------------------------------------------------
+# -------- Helper Functions ----------------------------------
+
+def create_parser():
+    parser = argparse.ArgumentParser(description='PyTorch ConvNet Training')
+
+    parser.add_argument('--results_dir', metavar='RESULTS_DIR', default='./results',
+                        help='results dir')
+    parser.add_argument('--save', metavar='SAVE', default='',
+                        help='saved folder')
+    parser.add_argument('--dataset', metavar='DATASET', default='cifar10',
+                        help='dataset name or folder')
+    parser.add_argument('--model', '-a', metavar='MODEL', default='resnet_binary',
+                        choices=model_names,
+                        help='model architecture: ' +
+                        ' | '.join(model_names) +
+                        ' (default: resnet_binary)')
+    parser.add_argument('--input_size', type=int, default=None,
+                        help='image input size')
+    parser.add_argument('--model_config', default='',
+                        help='additional architecture configuration')
+    parser.add_argument('--type', default='torch.cuda.FloatTensor',
+                        help='type of tensor - e.g torch.cuda.HalfTensor')
+    parser.add_argument('--gpus', default='0',
+                        help='gpus used for training - e.g 0,1,3')
+    parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
+                        help='number of data loading workers (default: 8)')
+    parser.add_argument('--epochs', default=2500, type=int, metavar='N',
+                        help='number of total epochs to run')
+    parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+                        help='manual epoch number (useful on restarts)')
+    parser.add_argument('-b', '--batch-size', default=256, type=int,
+                        metavar='N', help='mini-batch size (default: 256)')
+    parser.add_argument('--optimizer', default='SGD', type=str, metavar='OPT',
+                        help='optimizer function used')
+    parser.add_argument('--lr', '--learning_rate', default=0.1, type=float,
+                        metavar='LR', help='initial learning rate')
+    parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                        help='momentum')
+    parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+                        metavar='W', help='weight decay (default: 1e-4)')
+    parser.add_argument('--print-freq', '-p', default=10, type=int,
+                        metavar='N', help='print frequency (default: 10)')
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('-e', '--evaluate', type=str, metavar='FILE',
+                        help='evaluate model FILE on validation set')
+    return parser
+
+
+def count_tensor(t):
+    t = t.cpu().detach()
+    zeros = np.sum(t.numpy() == 0)
+    negs = np.sum(t.numpy() < 0)
+    poss = np.sum(t.numpy() > 0)
+    # zeros = np.sum(np.array(t) == 0)
+    # negs = np.sum(np.array(t) < 0)
+    # poss = np.sum(np.array(t) > 0)
+    return zeros, negs, poss
+
+
+def hook_fn_forward(module, input, output):
+    global layer_idx, batch_idx, detailed_array, counter_df
+    # print(">>============")
+    # print(module.__class__.__name__) # 用于区分模块
+    # print(layer_idx)
+    # print('input', input) # 首先打印出来
+    # print('output', type(output))
+    # total_feat_out.append(output) # 然后分别存入全局 list 中
+    # total_feat_in.append(input)
+    input_zeros, input_negs, input_poss = count_tensor(input[0])
+    # print(f"Input:\n\tzeros: {input_zeros}\n\tnegatives: {input_negs}\n\tpostives:{input_poss}")
+    output_zeros, output_negs, output_poss = count_tensor(output)
+    # print(f"output:\n\tzeros: {output_zeros}\n\tnegatives: {output_negs}\n\tpostives:{output_poss}")
+    # detailed_array[batch_idx, layer_idx * 8 + 0] = reduce(mul, input[0].shape) 
+    # detailed_array[batch_idx, layer_idx * 8 + 1] = reduce(mul, output.shape) 
+    detailed_array[batch_idx, layer_idx * 8 + 0] = input_zeros + input_negs + input_poss
+    detailed_array[batch_idx, layer_idx * 8 + 1] = output_zeros + output_negs + output_poss
+    detailed_array[batch_idx, layer_idx * 8 + 2] = input_zeros
+    detailed_array[batch_idx, layer_idx * 8 + 3] = input_negs
+    detailed_array[batch_idx, layer_idx * 8 + 4] = input_poss
+    detailed_array[batch_idx, layer_idx * 8 + 5] = output_zeros
+    detailed_array[batch_idx, layer_idx * 8 + 6] = output_negs
+    detailed_array[batch_idx, layer_idx * 8 + 7] = output_poss
+    
+    if batch_idx == 0:
+        row_list = [
+                layer_idx,
+                module.__class__.__name__,
+                str(input[0].shape),
+                detailed_array[batch_idx, layer_idx * 8 + 0],
+                float(detailed_array[batch_idx, layer_idx * 8 + 2]),
+                float(detailed_array[batch_idx, layer_idx * 8 + 3]),
+                float(detailed_array[batch_idx, layer_idx * 8 + 4]),
+                float(detailed_array[batch_idx, layer_idx * 8 + 3] / detailed_array[batch_idx, layer_idx + 0]),
+                str(output.shape),
+                detailed_array[batch_idx, layer_idx * 8 + 1],
+                float(detailed_array[batch_idx, layer_idx * 8 + 5]),
+                float(detailed_array[batch_idx, layer_idx * 8 + 6]),
+                float(detailed_array[batch_idx, layer_idx * 8 + 7]), 
+                float(detailed_array[batch_idx, layer_idx * 8 + 6] / detailed_array[batch_idx, layer_idx + 1]),
+            ] 
+        # print(row_list)
+        # print(len(row_list))
+        counter_df.loc[layer_idx]= row_list
+    layer_idx += 1
+
+
+def hook_fn_print_structure(module, input, output):
+    global batch_idx
+    if batch_idx == 0:
+        print(">>===========")
+        print(module)
+
+
+#------------------------------------
+# -------- MAIN LOOP ---------------
 
 
 def main():
-    global args, best_prec1
+    global best_prec1
     best_prec1 = 0
+    
+    parser = create_parser()
     args = parser.parse_args()
 
     if args.evaluate:
@@ -106,7 +226,6 @@ def main():
     if args.model_config != '':
         logging.info("extra model options: %s", args.model_config)
         model_config = dict(model_config, **literal_eval(args.model_config))
-
 
     model = model(**model_config)
     logging.info("created model with configuration: %s", model_config)
@@ -167,7 +286,7 @@ def main():
         #         'validate' : validate,
         #         'val_loader' : val_loader,
         #         'model' : model,
-        #         'criterion' : criterion, 
+        #         'criterion' : criterion,
         #         }
         # cProfile.runctx('validate(val_loader, model, criterion, 0)', globals, {}, filename=None)
         validate(val_loader, model, criterion, 0)
@@ -181,7 +300,6 @@ def main():
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     logging.info('training regime: %s', regime)
-
 
     for epoch in range(args.start_epoch, args.epochs):
         optimizer = adjust_optimizer(optimizer, epoch, regime)
@@ -220,11 +338,11 @@ def main():
         results.add(epoch=epoch + 1, train_loss=train_loss, val_loss=val_loss,
                     train_error1=100 - train_prec1, val_error1=100 - val_prec1,
                     train_error5=100 - train_prec5, val_error5=100 - val_prec5)
-        #results.plot(x='epoch', y=['train_loss', 'val_loss'],
+        # results.plot(x='epoch', y=['train_loss', 'val_loss'],
         #             title='Loss', ylabel='loss')
-        #results.plot(x='epoch', y=['train_error1', 'val_error1'],
+        # results.plot(x='epoch', y=['train_error1', 'val_error1'],
         #             title='Error@1', ylabel='error %')
-        #results.plot(x='epoch', y=['train_error5', 'val_error5'],
+        # results.plot(x='epoch', y=['train_error5', 'val_error5'],
         #             title='Error@5', ylabel='error %')
         results.save()
 
@@ -252,7 +370,8 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
 
         if not training:
             with torch.no_grad():
-                input_var = Variable(inputs.type(args.type), volatile=not training)
+                input_var = Variable(inputs.type(
+                    args.type), volatile=not training)
                 target_var = Variable(target)
                 # print(f"forward Input: {inputs.size()}")
                 # compute output
@@ -264,7 +383,6 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
             # compute output
             output = model(input_var)
             # output = model(inputs)
-
 
         loss = criterion(output, target_var)
         # loss = criterion(output, target)
@@ -282,13 +400,12 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
             optimizer.zero_grad()
             loss.backward()
             for p in list(model.parameters()):
-                if hasattr(p,'org'):
+                if hasattr(p, 'org'):
                     p.data.copy_(p.org)
             optimizer.step()
             for p in list(model.parameters()):
-                if hasattr(p,'org'):
-                    p.org.copy_(p.data.clamp_(-1,1))
-
+                if hasattr(p, 'org'):
+                    p.org.copy_(p.data.clamp_(-1, 1))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -309,19 +426,8 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
     return losses.avg, top1.avg, top5.avg
 
 
-def train(data_loader, model, criterion, epoch, optimizer):
-    # switch to train mode
-    model.train()
-    return forward(data_loader, model, criterion, epoch,
-                   training=True, optimizer=optimizer)
 
-
-def validate(data_loader, model, criterion, epoch):
-    # switch to evaluate mode
-    model.eval()
-    return forward(data_loader, model, criterion, epoch,
-                   training=False, optimizer=None)
-
-
+#--------------------------------
+# Entry of the program
 if __name__ == '__main__':
     main()
